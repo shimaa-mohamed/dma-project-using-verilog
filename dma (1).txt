@@ -1,0 +1,560 @@
+
+
+module incrementer(
+    input clk , input enable ,input reset,input reg[4:0] size, inout [19:0] address_bus 
+/*input reg[9:0] address1,
+    input reg[9:0] address2, output reg[9:0]outaddress1, output reg[9:0]outaddress2*/
+);
+
+reg [9:0]sizereg ;
+reg[9:0] address1;
+reg [9:0]address2;
+
+initial fork
+#1 sizereg<=size;
+#1 address1<=address_bus[9:0];
+#1 address2<=address_bus[19:10];
+
+//sizereg<= 10'b0000000011;
+join
+
+initial 
+begin
+$monitor("%d %d %d",sizereg,address1,address2);
+end
+always @(posedge clk) begin
+
+     //if(reset  == 1'b1) begin 
+	//    outaddress1<=0;
+    //	    outaddress2<=0;
+	//end
+     
+    // else begin	
+
+    if (enable == 1'b1) begin
+        if(sizereg != 0)fork
+            address1<= address1 +1; 
+          #10 address2<= address2 +1; 
+   	   sizereg<= sizereg -1;
+        join
+    
+        
+    end
+	//end // else
+end
+
+assign address_bus =  (~clk && enable && (sizereg>=0))? {address2,address1}: 20'bzzzzzzzzzzzzzzzzzzzz;
+
+endmodule
+
+//--------------------------------------
+module InOut_address(inOutPort,addressFrom,addressTo,outaddress1,outaddress2,contSignal);
+input contSignal;
+inout [19:0] inOutPort;
+output wire[9:0] addressFrom,addressTo;
+input wire [9:0] outaddress1,outaddress2;
+
+assign inOutPort[19:10]  = (contSignal)? outaddress1 : {10{1'bz}};//out
+assign inOutPort[9:0]= (contSignal)? outaddress2 : {10{1'bz}};//out
+assign addressTo   = (contSignal)? {10{1'bz}}: {inOutPort[9:0]};  //input  
+assign addressFrom = (contSignal)? {10{1'bz}}: {inOutPort[19:10]};//input 
+endmodule
+//-----------------------------
+
+module DMA(address_bus,data_bus,control_bus,DREQ1,DACK1, DREQ2,DACK2, HREQ,HACK,clk,reset,size);
+
+input HACK,reset,clk;
+output reg HREQ;
+input  wire[4:0] size;
+ //input reg[4:0]size;
+inout [19:0] address_bus;
+input [41:0] data_bus;
+//output reg [4:0] size_buff;
+//inout [1:0] control_bus;
+input control_bus;
+//reg [9:0] addressFrom,addressTo;
+wire [9:0] addressTo,addressFrom;
+//reg [2:0] locFrom;
+//reg [2:0] locTo;
+
+reg [31:0] data;
+input wire DREQ1, DREQ2;
+output reg DACK1, DACK2;
+
+//incr
+wire[9:0]outaddress2, outaddress1;
+//reg [25:0] address_bus1;
+//reg [1:0] control_bus1;
+//enable 3shan l write , didn't work
+//reg E;
+
+reg enable;
+// control signal
+parameter read=1'b0;
+parameter write=1'b1;
+parameter doNothing=1'bz;
+
+//for the size 
+
+/*initial begin
+size_buff<= size;
+end
+*/
+always @(posedge clk)
+begin
+if(reset)
+begin
+//sending request
+if (DREQ1==1'b1 || DREQ2==1'b1)
+begin
+HREQ=1'b1;
+end
+//recieving acknowledge
+if(HACK==1'b1)
+begin
+//Handling priority 
+//if(size==10'b0)
+//begin
+if (DREQ1==1'b1)
+DACK1<=1'b1;
+else if (DREQ2==1'b1)
+DACK2<=1'b1;
+end
+enable<=1'b1;
+//assign size
+//size<=data_bus[9:0];
+data<=data_bus[31:10];
+//end 
+end
+end
+incrementer inc2(clk ,enable ,0,size-1, address_bus);
+//incrementer inc1 (clk , enable,reset,size,addressTo,addressFrom,outaddress2,outaddress1);
+//InOut_address addressHandling  (address_bus,addressFrom,addressTo,outaddress1,outaddress2,HACK);
+
+/*assign address_bus = (HACK) ? {20{1'bz}} : 20'hf0f06;//initializing address bus 
+
+always @(posedge clk && HACK==1'b1)
+begin
+control_bus<=read;
+//address_bus1<=outaddress2;
+end
+
+always @(negedge clk && HACK==1'b1)
+begin
+control_bus<=write;
+//address_bus1<=outaddress1;
+end*/
+
+endmodule
+
+
+
+//-------------------------
+//processor module
+module processor( 
+    input clk ,input  wire[4:0]size ,input hr, input[31:0]data_bus, inout [19:0]address_bus,input[1:0]control_bus,
+    output reg ha 
+);
+
+//temp regs to store the basecase data initialy
+reg[31:0]preg[0:31];
+reg [31:0]temp_data;
+reg[19:0]temp_address;
+reg[1:0]temp_control;
+reg[9:0] curraddress1,curraddress2;
+reg currenable;
+reg outnotin;
+wire[9:0] addressbus_f;
+wire [19:10]addressbus_s;
+
+assign addressbus_f = address_bus[9:0];
+assign addressbus_s = address_bus[19:10];
+
+
+initial begin
+#1  temp_data <=data_bus[9:0];
+    temp_address = address_bus;
+    temp_control = control_bus;
+preg[8]<=0;
+	//curraddress1 <= address_bus[9:0];
+//curraddress2 <= address_bus[19:10];
+//for debugging
+end
+
+
+
+
+always @(posedge clk)
+begin
+    if(hr == 1) begin
+        if(size < 5) begin
+        ha <= 0; 
+        currenable <=1;    
+        end
+        else begin
+            currenable <=0;
+            ha <=1;
+        end
+    end
+end
+
+always@(posedge clk)
+begin
+if(ha==1)
+preg[8]<=preg[8]+1;
+end
+
+always @(negedge clk) begin
+    if(ha == 0) begin
+    outnotin = 1;
+    temp_address <= {curraddress2, curraddress1};
+
+    end
+end
+
+
+incrementer inc2(clk ,currenable ,0,size-1, address_bus);
+/*module incrementer(
+    input clk , input enable ,input reset,input[9:0] size, inout [19:0] address_bus */
+initial 
+begin
+//$monitor("%b %b %b",ha,currenable,temp_address);
+end
+endmodule // processor 
+
+
+
+//--------------------------------------------------------------------------
+
+module io1 (input clk,input enable ,output reg req , input akn, input [2:0]control_bus ,inout[19:0] address_bus , inout[31:0] data_bus);
+
+//memory of io device 
+reg[31:0]mem[0:31];
+
+reg[31:0] databus_buff;
+reg[19:0] addressbus_buff;
+
+//assign address_bus = 20'b0;
+//assign data_bus = 0;
+
+initial begin
+//$monitor("%d",databus_buff);
+// #1 addressbus_buff <= address_bus;
+   // databus_buff = 1;
+req<=1'b0;
+  mem[0] = 32'b0;
+   mem[1] = 25;
+   mem[2] = 11;
+   mem[3] = 15;
+mem[4] = 16;
+mem[5] = 17;
+
+end
+
+
+always @(negedge clk)begin
+addressbus_buff <= address_bus;
+end
+
+
+
+/*
+always @(posedge clk)begin
+// addressbus_buff <= address_bus;
+ if(akn == 1)begin
+    if(control_bus[1] == 0)begin
+      databus_buff <= mem[addressbus_buff[9:0]]; 
+    end // read from the io device itself
+    /*else if(r_w == 1)begin
+        mem[address_bus[19:10]] <= databus_buff; 
+    end // end akn
+end // always
+
+
+always @(negedge clk)begin
+   if(akn == 1)begin
+    if(control_bus[1]== 1) mem[address_bus[19:10]] <= data_bus;
+end//akn
+end//always
+
+*/
+
+
+always @(negedge clk)
+begin
+    
+    	if(control_bus == 1    ) 
+			mem[address_bus[19:10]] <=data_bus;	
+ 
+
+
+
+
+ 
+end
+
+
+always @(posedge clk)begin
+		if(control_bus == 3) 
+		   databus_buff <= mem[addressbus_buff[9:0]];
+
+
+	
+
+
+end
+
+
+
+assign data_bus =(control_bus ==3 && clk==1'b0) ? databus_buff : 32'bzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz;
+
+endmodule
+
+
+//----------------------------------
+
+
+
+module io2 (input clk,input enable ,output reg req , input akn, input [2:0]control_bus ,inout[19:0] address_bus , inout[31:0] data_bus);
+
+//memory of io device 
+reg[31:0]mem[0:31];
+
+reg[31:0] databus_buff;
+reg[19:0] addressbus_buff;
+
+//assign address_bus = 20'b0;
+//assign data_bus = 0;
+
+initial begin
+//$monitor("%d",databus_buff);
+// #1 addressbus_buff <= address_bus;
+   // databus_buff = 1;
+req<=1'b0;
+  mem[0] = 7;
+   mem[1] = 77;
+   mem[2] = 777;
+mem[3] = 7777;
+mem[4] = 7777;
+   mem[5] = 7777777;
+end
+
+
+always @(negedge clk)begin
+addressbus_buff <= address_bus;
+end
+
+
+
+/*
+always @(posedge clk)begin
+// addressbus_buff <= address_bus;
+ if(akn == 1)begin
+    if(control_bus[1] == 0)begin
+      databus_buff <= mem[addressbus_buff[9:0]]; 
+    end // read from the io device itself
+    /*else if(r_w == 1)begin
+        mem[address_bus[19:10]] <= databus_buff; 
+    end // end akn
+end // always
+
+
+always @(negedge clk)begin
+   if(akn == 1)begin
+    if(control_bus[1]== 1) mem[address_bus[19:10]] <= data_bus;
+end//akn
+end//always
+
+*/
+
+
+always @(negedge clk)
+begin
+    
+    	if(control_bus == 2    ) 
+			mem[address_bus[19:10]] <=data_bus;	
+ 
+
+
+
+
+ 
+end
+
+
+always @(posedge clk)begin
+		if(control_bus == 4) 
+		   databus_buff <= mem[addressbus_buff[9:0]];
+
+
+	
+
+
+end
+
+
+
+assign data_bus =(control_bus ==4 && clk==1'b0) ? databus_buff : 32'bzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz;
+
+endmodule
+
+
+
+
+
+
+
+//----------------------------------------------
+
+module ram(
+    input clk ,  inout [31:0] data_bus,
+    inout [19:0]address_bus,input[2:0] control_bus
+);
+
+reg[31:0] ram_mem[0:31];
+reg[31:0] databus_buff;
+reg[31:0]addressbus_buff;
+
+initial begin
+ram_mem[0] <= 1;
+ram_mem[1] <= 2;
+ram_mem[2] <= 3;
+ram_mem[3] <= 4;
+ram_mem[4] <= 5;
+ram_mem[5] <= 6;
+
+ram_mem[6] <= 7;
+end
+
+always @(negedge clk)begin
+addressbus_buff <= address_bus;
+end
+
+always @(negedge clk)
+begin
+    
+    	if(control_bus == 0 || control_bus == 3 || control_bus == 4  ) 
+			ram_mem[address_bus[19:10]] <=data_bus;	
+ 
+
+
+
+
+ 
+end
+
+
+always @(posedge clk)begin
+		if(control_bus == 0 || control_bus == 1  || control_bus == 2  ) 
+		   databus_buff <= ram_mem[addressbus_buff[9:0]];
+
+
+	
+
+
+end
+
+
+
+assign data_bus = (  (control_bus == 0 || control_bus == 1 || control_bus == 2 )&& clk==1'b0)? databus_buff : 32'bzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz;
+
+
+
+
+endmodule // ram
+
+//-----------------------------------------------------------------------------
+
+
+
+module system();
+
+reg clk,r_w;
+wire en1, mode;
+wire  akn,ha;
+wire [4:0]size;
+wire [19:0]address_bus;
+wire [31:0]data_bus; 
+reg[19:0] address_busbuff;
+reg[31:0] data_busbuff;
+reg[2:0]control_bus;
+reg combars;
+wire req;
+reg ok;
+integer i;
+wire HREQ, DREQ1, DACK1;
+reg reset, HACK;
+
+
+assign req = 1'b1;
+assign mode = 0;
+assign size = 6;
+initial begin 
+// data_busbuff <= 3;
+//address_busbuff <= 20'b0;
+
+ control_bus <=4;
+
+
+end
+
+initial begin
+i<=0;
+$monitor("data bus is : %d %d ", data_bus,clk);
+//en1b = 1;
+//en2b =0;
+end
+initial begin
+address_busbuff<=20'b00000010100000000000;
+#10 address_busbuff<=20'bz;
+ok<=1;
+#10 ok <=0; 
+end
+
+initial begin
+
+clk <=1'b1;
+HACK<=1'b1; 
+reset<=1'b1; 
+end
+
+always begin 
+#5 clk =~clk;
+end
+
+
+
+
+
+//assign address_bus =(ok==1)?address_busbuff:20'bzzzzzzzzzzzzzzzzzzzz;
+assign address_bus =  address_busbuff;
+
+//selector s(clk , en1,en2);
+//processor, dma , io ,ram
+io1 Io1 (clk,en1, DREQ1 ,DACK1, control_bus ,address_bus , data_bus);
+io2 Io2 (clk,en1, DREQ1 ,DACK1, control_bus ,address_bus , data_bus);
+
+processor p ( clk ,size, req, data_bus,address_bus, control_bus, ha );
+
+DMA d(address_bus,data_bus,control_bus,DREQ1,DACK1, DREQ2,DACK2, HREQ,HACK,clk,reset,size);
+
+ram ram1(clk , data_bus, address_bus,control_bus);
+
+
+endmodule // system
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
